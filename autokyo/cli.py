@@ -9,7 +9,7 @@ import sys
 import time
 
 from autokyo.actions import AutomationError, get_mouse_position
-from autokyo.config import ConfigError, load_config
+from autokyo.config import ConfigError, load_config, resolve_config_path
 from autokyo.mcp_server import run_stdio_server
 from autokyo.orchestrator import CaptureOrchestrator, OrchestratorError
 from autokyo.page_state import PageStateError, PageStateDetector
@@ -25,8 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="config.toml",
-        help="Path to TOML config file. Defaults to ./config.toml",
+        default=None,
+        help=(
+            "Path to TOML config file. If omitted, AutoKyo searches ./config.toml, "
+            "~/Library/Application Support/AutoKyo/config.toml, and ~/.config/autokyo/config.toml"
+        ),
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -142,12 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_install_parser = subparsers.add_parser(
         "mcp-install",
         aliases=["mcp-register"],
-        help="Register AutoKyo as a local Codex MCP server",
+        help="Register AutoKyo as a local MCP server in a supported client",
     )
     mcp_install_parser.add_argument(
         "client",
         nargs="?",
-        choices=["codex"],
+        choices=["codex", "claude", "claude-code", "antigravity", "openclaw"],
         default="codex",
         help="MCP client to register with. Defaults to codex",
     )
@@ -161,6 +164,17 @@ def build_parser() -> argparse.ArgumentParser:
         dest="python_executable",
         default=None,
         help="Optional Python executable to use for the MCP server command",
+    )
+    mcp_install_parser.add_argument(
+        "--client-config",
+        default=None,
+        help="Optional client config path for file-based installers like Antigravity",
+    )
+    mcp_install_parser.add_argument(
+        "--scope",
+        choices=["local", "project", "user"],
+        default="user",
+        help="Config scope for clients that support it. Defaults to user",
     )
     mcp_install_parser.add_argument(
         "--dry-run",
@@ -192,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "mcp":
-            return run_stdio_server(default_config_path=args.config)
+            return run_stdio_server(default_config_path=resolve_config_path(args.config))
 
         if args.command in {"mousepos", "coords"}:
             return _run_mousepos(watch=bool(args.watch), interval=float(args.interval))
@@ -224,8 +238,10 @@ def main(argv: list[str] | None = None) -> int:
             return _install_mcp_server(
                 client=args.client,
                 server_name=args.name,
-                config_path=Path(args.config),
+                config_path_arg=args.config,
                 python_executable=args.python_executable,
+                client_config_path=args.client_config,
+                scope=args.scope,
                 dry_run=bool(args.dry_run),
             )
 
@@ -282,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, ensure_ascii=True, indent=2))
             return 0
 
-        config = load_config(args.config)
+        config = load_config(resolve_config_path(args.config))
         if args.command == "run":
             summary = CaptureOrchestrator(config).run()
             print(
@@ -388,42 +404,239 @@ def _install_mcp_server(
     *,
     client: str,
     server_name: str,
-    config_path: Path,
+    config_path_arg: str | None,
     python_executable: str | None,
+    client_config_path: str | None,
+    scope: str,
     dry_run: bool,
 ) -> int:
-    if client != "codex":
-        raise ValueError(f"Unsupported MCP client: {client}")
-
-    codex_executable = shutil.which("codex")
-    if codex_executable is None:
-        raise ValueError("Could not find 'codex' on PATH")
-
-    resolved_config = config_path.expanduser().resolve()
+    normalized_client = "claude" if client == "claude-code" else client
+    resolved_config = resolve_config_path(config_path_arg)
     invocation = _build_local_mcp_invocation(
         config_path=resolved_config,
         python_executable=python_executable,
     )
-    remove_command = [codex_executable, "mcp", "remove", server_name]
-    add_command = [codex_executable, "mcp", "add", server_name, "--", *invocation]
+
+    if normalized_client == "codex":
+        client_executable = shutil.which("codex")
+        if client_executable is None:
+            raise ValueError("Could not find 'codex' on PATH")
+        remove_command = [client_executable, "mcp", "remove", server_name]
+        install_command = [client_executable, "mcp", "add", server_name, "--", *invocation]
+    elif normalized_client == "claude":
+        client_executable = shutil.which("claude")
+        if client_executable is None:
+            raise ValueError("Could not find 'claude' on PATH")
+        remove_command = [client_executable, "mcp", "remove", server_name]
+        install_command = [
+            client_executable,
+            "mcp",
+            "add",
+            server_name,
+            "--scope",
+            scope,
+            "--",
+            *invocation,
+        ]
+        payload = {
+            "status": "ready" if dry_run else "completed",
+            "client": normalized_client,
+            "name": server_name,
+            "scope": scope,
+            "config_path": str(resolved_config),
+            "server_command": invocation,
+            "remove_command": remove_command,
+            "install_command": install_command,
+        }
+        if dry_run:
+            print(json.dumps(payload, ensure_ascii=True, indent=2))
+            return 0
+        subprocess.run(remove_command, check=False, capture_output=True, text=True)
+        subprocess.run(install_command, check=True)
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        return 0
+    if normalized_client == "antigravity":
+        return _install_antigravity_server(
+            server_name=server_name,
+            invocation=invocation,
+            client_config_path=client_config_path,
+            config_path=resolved_config,
+            dry_run=dry_run,
+        )
+    if normalized_client == "openclaw":
+        return _install_openclaw_server(
+            server_name=server_name,
+            invocation=invocation,
+            config_path=resolved_config,
+            dry_run=dry_run,
+        )
+    else:
+        raise ValueError(f"Unsupported MCP client: {client}")
+
+
+def _install_antigravity_server(
+    *,
+    server_name: str,
+    invocation: list[str],
+    client_config_path: str | None,
+    config_path: Path,
+    dry_run: bool,
+) -> int:
+    antigravity_config = _resolve_antigravity_config_path(client_config_path)
+    config_data = _load_json_object(antigravity_config)
+    server_entry = {
+        "command": invocation[0],
+        "args": invocation[1:],
+    }
+    mcp_servers = config_data.setdefault("mcpServers", {})
+    mcp_servers[server_name] = server_entry
 
     payload = {
         "status": "ready" if dry_run else "completed",
-        "client": client,
+        "client": "antigravity",
         "name": server_name,
-        "config_path": str(resolved_config),
+        "config_path": str(config_path),
+        "client_config_path": str(antigravity_config),
         "server_command": invocation,
-        "codex_add_command": add_command,
+        "entry": server_entry,
     }
-
     if dry_run:
         print(json.dumps(payload, ensure_ascii=True, indent=2))
         return 0
 
-    subprocess.run(remove_command, check=False, capture_output=True, text=True)
-    subprocess.run(add_command, check=True)
+    _write_json_object(antigravity_config, config_data)
     print(json.dumps(payload, ensure_ascii=True, indent=2))
     return 0
+
+
+def _install_openclaw_server(
+    *,
+    server_name: str,
+    invocation: list[str],
+    config_path: Path,
+    dry_run: bool,
+) -> int:
+    server_entry = {
+        "command": invocation[0],
+        "args": invocation[1:],
+        "env": {},
+    }
+    openclaw_executable = shutil.which("openclaw")
+    if openclaw_executable is not None:
+        install_command = [
+            openclaw_executable,
+            "config",
+            "set",
+            f"mcp.servers.{server_name}",
+            json.dumps(server_entry, ensure_ascii=True),
+            "--strict-json",
+        ]
+        validate_command = [openclaw_executable, "config", "validate"]
+        payload = {
+            "status": "ready" if dry_run else "completed",
+            "client": "openclaw",
+            "name": server_name,
+            "config_path": str(config_path),
+            "client_config_path": str(Path.home() / ".openclaw" / "openclaw.json"),
+            "server_command": invocation,
+            "entry": server_entry,
+            "install_command": install_command,
+            "validate_command": validate_command,
+        }
+        if dry_run:
+            print(json.dumps(payload, ensure_ascii=True, indent=2))
+            return 0
+        subprocess.run(install_command, check=True)
+        subprocess.run(validate_command, check=True)
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        return 0
+
+    openclaw_config_path = Path.home() / ".openclaw" / "openclaw.json"
+    config_data = _load_json_object(openclaw_config_path)
+    mcp = config_data.setdefault("mcp", {})
+    servers = mcp.setdefault("servers", {})
+    servers[server_name] = server_entry
+    payload = {
+        "status": "ready" if dry_run else "completed",
+        "client": "openclaw",
+        "name": server_name,
+        "config_path": str(config_path),
+        "client_config_path": str(openclaw_config_path),
+        "server_command": invocation,
+        "entry": server_entry,
+        "install_method": "file-write-fallback",
+    }
+    if dry_run:
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        return 0
+    _write_json_object(openclaw_config_path, config_data)
+    print(json.dumps(payload, ensure_ascii=True, indent=2))
+    return 0
+
+
+def _resolve_antigravity_config_path(client_config_path: str | None) -> Path:
+    if client_config_path:
+        return Path(client_config_path).expanduser().resolve()
+
+    candidates = _discover_antigravity_config_candidates()
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise ValueError(
+            "Found multiple Antigravity mcp_config.json files. Re-run with --client-config <path>."
+        )
+    raise ValueError(
+        "Could not find Antigravity mcp_config.json. Open Antigravity and use "
+        "'Manage MCP Servers > View raw config' once, or re-run with --client-config <path>."
+    )
+
+
+def _discover_antigravity_config_candidates() -> list[Path]:
+    direct_candidates = [
+        Path.home() / "Library" / "Application Support" / "Antigravity" / "mcp_config.json",
+        Path.home() / "Library" / "Application Support" / "Google" / "Antigravity" / "mcp_config.json",
+        Path.home() / ".config" / "antigravity" / "mcp_config.json",
+        Path.home() / ".config" / "Antigravity" / "mcp_config.json",
+    ]
+    matches = [path.resolve() for path in direct_candidates if path.exists()]
+    if matches:
+        return matches
+
+    search_roots = [
+        Path.home() / "Library" / "Application Support",
+        Path.home() / ".config",
+    ]
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("mcp_config.json"):
+            if path.is_file():
+                matches.append(path.resolve())
+    unique_matches: list[Path] = []
+    seen: set[Path] = set()
+    for path in matches:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique_matches.append(path)
+    return unique_matches
+
+
+def _load_json_object(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Could not parse JSON config file: {path}") from exc
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Config file must contain a JSON object: {path}")
+    return loaded
+
+
+def _write_json_object(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
 
 
 def _build_local_mcp_invocation(
@@ -431,6 +644,10 @@ def _build_local_mcp_invocation(
     config_path: Path,
     python_executable: str | None,
 ) -> list[str]:
+    self_command = _resolve_self_command()
+    if self_command is not None:
+        return [str(self_command), "--config", str(config_path), "mcp"]
+
     python_path = _resolve_python_executable(python_executable)
     project_root = Path(__file__).resolve().parent.parent
     main_script = project_root / "main.py"
@@ -439,6 +656,20 @@ def _build_local_mcp_invocation(
         return [str(python_path), str(main_script), "--config", str(config_path), "mcp"]
 
     return [str(python_path), "-m", "autokyo", "--config", str(config_path), "mcp"]
+
+
+def _resolve_self_command() -> Path | None:
+    argv0 = Path(sys.argv[0]).expanduser()
+    if argv0.name != "autokyo":
+        return None
+
+    if argv0.exists():
+        return argv0.resolve()
+
+    resolved = shutil.which("autokyo")
+    if resolved:
+        return Path(resolved).expanduser().resolve()
+    return None
 
 
 def _resolve_python_executable(python_executable: str | None) -> Path:

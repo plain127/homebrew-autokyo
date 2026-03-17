@@ -9,6 +9,47 @@ class ConfigError(ValueError):
     pass
 
 
+def default_config_candidates() -> tuple[Path, ...]:
+    project_root = Path(__file__).resolve().parents[1]
+    candidates = [
+        Path.cwd() / "config.toml",
+        Path.home() / "Library" / "Application Support" / "AutoKyo" / "config.toml",
+        Path.home() / ".config" / "autokyo" / "config.toml",
+        project_root / "config.toml",
+    ]
+
+    unique_candidates: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_candidates.append(resolved)
+    return tuple(unique_candidates)
+
+
+def resolve_config_path(path: str | Path | None, *, must_exist: bool = True) -> Path:
+    if path is not None and str(path).strip():
+        resolved = Path(path).expanduser().resolve()
+        if must_exist and not resolved.exists():
+            raise ConfigError(f"Config file not found: {resolved}")
+        return resolved
+
+    for candidate in default_config_candidates():
+        if candidate.exists():
+            return candidate
+
+    if must_exist:
+        searched = ", ".join(str(candidate) for candidate in default_config_candidates())
+        raise ConfigError(
+            "Could not find config.toml automatically. "
+            f"Searched: {searched}. Pass --config explicitly."
+        )
+
+    return default_config_candidates()[1]
+
+
 def _to_path(base_dir: Path, raw_value: str) -> Path:
     path = Path(raw_value).expanduser()
     if path.is_absolute():

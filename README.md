@@ -1,85 +1,58 @@
 # AutoKyo
 
-> 교보문고 전자도서관 eBook 작업을 자동화하는 macOS용 로컬 도구  
-> 자동 클릭, 페이지 넘김, 화면 변화 감지, PDF 변환, MCP 연동 지원
+> macOS용 교보문고 전자도서관 eBook 작업 자동화 도구  
+> 자동 클릭, 페이지 변화 감지, PDF 변환, MCP 등록 지원
 
-`AutoKyo`는 `교보문고 전자도서관`, `전자책`, `eBook`, `macOS`, `자동 캡처`, `PDF 변환` 같은 반복 작업을 더 쉽게 처리하기 위한 로컬 자동화 도구입니다. 쉽게 말해, 사람이 계속 눌러야 하는 클릭과 페이지 넘김을 대신하고, 페이지가 바뀌었는지 확인하고, `captures/` 폴더의 이미지를 하나의 PDF로 묶는 스크립트입니다. `Codex`, `Claude Code` 같은 MCP 클라이언트에서도 호출할 수 있습니다.
+`AutoKyo`는 반복 클릭과 페이지 넘김을 줄이고, `captures/` 이미지를 PDF로 묶기 쉽게 만든 로컬 도구입니다.
 
-이 프로젝트는 반복 작업을 줄이고 접근성과 편의성을 높이기 위한 목적으로 만들었습니다. 사용자는 관련 저작권, 서비스 약관, 대여 조건을 직접 확인해야 하며, 권리 없는 공유·배포·재판매는 저작권 및 약관 위반이 될 수 있습니다.
+이 프로젝트는 편의성과 접근성을 위한 도구입니다. 사용 전 저작권, 서비스 약관, 대여 조건을 직접 확인해야 하며, 권리 없는 공유·배포·재판매는 저작권 및 약관 위반이 될 수 있습니다.
 
-설치형으로 쓰면 `autokyo run`처럼 사용할 수 있고, 저장소에서 바로 실행할 때는 `python3 -m autokyo run` 형태로 쓰면 됩니다.
-
-## 설치
-
-Homebrew 설치는 첫 릴리스와 tap 공개 후:
-
-```bash
-brew install plain127/tap/autokyo
-autokyo run
-```
-
-저장소에서 바로 실행:
-
-```bash
-cd /path/to/AutoKyo
-python3 -m autokyo run
-```
-
-## 핵심 기능
-
-- 페이지 변화 감지로 마지막 페이지 판정 지원
-- 후속 확인 버튼 클릭 같은 `post_steps` 처리
-- `captures/` 이미지를 바로 PDF로 변환
-- 로컬 MCP 서버로 Codex, Claude Code 등과 연결 가능
-
-## 필수 요구사항
+## 요구사항
 
 - macOS
 - Python 3.11 이상
-- 대상 앱과 같은 맥에서 실행
 - Python 인터프리터에 `손쉬운 사용` 권한
 - Python 인터프리터에 `화면 및 시스템 오디오 녹화` 권한
-- `config.toml`에 실제 좌표와 딜레이 값 반영
+- 실제 좌표와 딜레이가 들어간 `config.toml`
 
-## 빠른 시작
+`config.toml`은 아래 순서로 자동 탐색합니다.
+
+- `./config.toml`
+- `~/Library/Application Support/AutoKyo/config.toml`
+- `~/.config/autokyo/config.toml`
+
+## 설치
 
 ```bash
-cd /path/to/AutoKyo
-python3 -m autokyo mousepos --watch
-python3 -m autokyo --config config.toml probe
-python3 -m autokyo --config config.toml run
-python3 -m autokyo pdf --delete-source
-python3 -m autokyo --config config.toml mcp-install codex
+brew install plain127/tap/autokyo
+autokyo --help
 ```
 
-## 주요 명령
+## 빠른사용법
+### MCP 등록
 
-- `run`: 캡처 클릭 -> 대기 -> 후속 클릭 -> 다음 페이지 -> 화면 변화 확인 반복
-- `probe`: `page.change_region`이 맞는지 한 번 캡처해서 확인
-- `mousepos`: 현재 마우스 좌표 측정
-- `status`: 현재 세션 상태 확인
-- `pdf`: `captures/` 안 이미지를 PDF로 묶기
-- `mcp`: 로컬 stdio MCP 서버로 실행
-- `mcp-install codex`: Codex에 AutoKyo MCP 등록
-
-## config.toml에서 먼저 볼 값
-
-- `page.change_region`: 페이지가 바뀌면 달라지는 작은 영역
-- `triggers.capture`: 캡처 버튼 좌표
-- `capture.post_steps`: 확인 버튼 같은 후속 클릭
-- `triggers.next_page`: 다음 페이지 키
-- `capture.post_action_delay_ms`: 캡처 후 대기 시간
-- `page.stall_timeout_seconds`: 더 이상 페이지가 안 바뀔 때 종료로 볼 시간
-- `loop.max_pages`: `0`이면 끝까지, 그 외에는 현재 위치부터 지정 장수만 진행
-
-## MCP 사용
-
-AutoKyo의 MCP 모드는 `로컬 stdio 서버`입니다. 즉 MCP 클라이언트가 AutoKyo를 자식 프로세스로 실행하고, 표준입출력으로 툴 호출을 주고받습니다.
-
-공통 실행 명령:
+터미널에서 바로 등록할 수 있습니다.
 
 ```bash
-python3 -m autokyo --config config.toml mcp
+autokyo mcp-install codex
+autokyo mcp-install claude
+autokyo mcp-install openclaw
+autokyo mcp-install antigravity
+```
+
+Antigravity가 설정 파일을 못 찾으면 직접 지정하면 됩니다.
+
+```bash
+autokyo mcp-install antigravity --client-config /path/to/mcp_config.json
+```
+
+저장소에서 직접 실행 중이면 아래처럼 쓰면 됩니다.
+
+```bash
+python3 -m autokyo mcp-install codex
+python3 -m autokyo mcp-install claude
+python3 -m autokyo mcp-install openclaw
+python3 -m autokyo mcp-install antigravity --client-config /path/to/mcp_config.json
 ```
 
 현재 MCP에서 노출하는 툴:
@@ -90,86 +63,63 @@ python3 -m autokyo --config config.toml mcp
 - `get_mouse_position`
 - `build_pdf`
 
-실제 동작 순서:
+MCP 등록 후 LLM에게 이렇게 말하면 됩니다.
 
-- MCP 클라이언트가 AutoKyo 프로세스를 실행
-- AutoKyo가 stdio로 대기
-- 클라이언트가 툴 목록을 읽고 필요한 툴 호출
-- `run_capture_session` 호출 시 로컬 맥에서 실제 클릭, 키 입력, 화면 변화 확인 수행
-- `build_pdf` 호출 시 `captures/` 안 이미지를 PDF로 생성
+- `AutoKyo MCP로 현재 마우스 좌표 확인해`
+- `AutoKyo MCP로 probe_region 실행해서 change_region이 맞는지 봐줘`
+- `AutoKyo MCP로 현재 세션 상태 확인해`
+- `AutoKyo MCP로 현재 설정대로 자동화 실행해`
+- `AutoKyo MCP로 captures 폴더를 PDF로 만들어`
 
-CLI의 모든 명령이 MCP로 노출되는 것은 아니며, 현재는 위 5개 툴만 사용합니다.
-
-## Codex
-
-가장 쉬운 방법은 아래 한 줄입니다.
+## 세부 사용법
+1. 캡처 버튼 좌표 확인
 
 ```bash
-python3 -m autokyo --config config.toml mcp-install codex
+python3 -m autokyo mousepos --watch
 ```
 
-수동 등록을 원하면 Codex CLI는 `~/.codex/config.toml`의 MCP 설정을 읽습니다.
+2. `config.toml` 수정
 
-```toml
-[mcp_servers.autokyo]
-command = "/usr/local/bin/python3"
-args = ["/path/to/AutoKyo/main.py", "--config", "/path/to/AutoKyo/config.toml", "mcp"]
+- `triggers.capture`
+- `capture.post_steps`
+- `triggers.next_page`
+- `page.change_region`
+- `capture.post_action_delay_ms`
+- `page.stall_timeout_seconds`
+- `loop.max_pages`
+
+3. 페이지 변화 감지 확인
+
+```bash
+python3 -m autokyo probe
 ```
 
-## Claude Code
+4. 실행
 
-Claude Code는 프로젝트 루트의 `.mcp.json`이나 `claude mcp add`를 사용할 수 있습니다.
-
-```json
-{
-  "mcpServers": {
-    "autokyo": {
-      "command": "/usr/local/bin/python3",
-      "args": [
-        "/path/to/AutoKyo/main.py",
-        "--config",
-        "/path/to/AutoKyo/config.toml",
-        "mcp"
-      ],
-      "env": {}
-    }
-  }
-}
+```bash
+python3 -m autokyo run
 ```
 
-## Antigravity
+5. PDF 만들기
 
-Antigravity는 `mcp_config.json`의 `mcpServers`에 로컬 커맨드 기반 MCP 서버를 넣는 방식으로 연결하면 됩니다.
-
-```json
-{
-  "mcpServers": {
-    "autokyo": {
-      "command": "/usr/local/bin/python3",
-      "args": [
-        "/path/to/AutoKyo/main.py",
-        "--config",
-        "/path/to/AutoKyo/config.toml",
-        "mcp"
-      ],
-      "env": {}
-    }
-  }
-}
+```bash
+python3 -m autokyo pdf --delete-source
 ```
 
-## OpenClaw
+설치형으로 쓰는 경우 `python3 -m autokyo` 대신 `autokyo`만 쓰면 됩니다.
 
-OpenClaw은 배포판이나 MCP 브리지 구성에 따라 설정 형식이 다를 수 있습니다. `command`와 `args` 기반 로컬 MCP 서버 등록을 지원하면 아래 값만 맞춰 넣으면 됩니다.
+## 자주 쓰는 명령
 
-```text
-command: /usr/local/bin/python3
-args: ["/path/to/AutoKyo/main.py", "--config", "/path/to/AutoKyo/config.toml", "mcp"]
-```
+- `autokyo run`: 자동화 실행
+- `autokyo probe`: 화면 변화 감지 영역 확인
+- `autokyo mousepos --watch`: 마우스 좌표 확인
+- `autokyo status`: 현재 세션 상태 출력
+- `autokyo pdf --delete-source`: `captures/`를 PDF로 만들고 원본 삭제
+- `autokyo mcp`: 로컬 stdio MCP 서버 실행
 
 ## 주의사항
 
-- 창 위치가 바뀌면 좌표 클릭이 어긋날 수 있습니다.
+- 창 위치가 바뀌면 좌표 클릭이 틀어질 수 있습니다.
 - `page.change_region`이 잘못 잡히면 마지막 페이지 판정이 흔들릴 수 있습니다.
+- 저장 완료 자체는 확인하지 않고, 설정된 대기 시간 뒤에 다음 단계로 넘어갑니다.
 - `max_pages = 0`이면 화면 변화가 멈출 때까지 계속 진행합니다.
-- 결과 저장 완료 자체는 확인하지 않고, 설정된 대기 시간 뒤에 다음 단계로 넘어갑니다.
