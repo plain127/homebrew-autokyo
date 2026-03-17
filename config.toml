@@ -1,0 +1,36 @@
+[paths]
+state_file = "./runtime/session.json"
+artifact_dir = "./artifacts"
+
+[page]
+start_index = 1
+change_timeout_seconds = 2.5
+stall_timeout_seconds = 4.0
+post_turn_delay_ms = 250
+poll_interval_seconds = 0.25
+stability_polls = 2
+change_region = { x = 76, y = 849, width = 260, height = 70 }
+
+[capture]
+post_action_delay_ms = 350
+
+[[capture.post_steps]]
+type = "mouse_click"
+x = 340
+y = 560
+delay_ms = 2000
+
+[loop]
+startup_delay_seconds = 3.0
+cooldown_seconds = 0.2
+max_pages = 0
+resume = true
+
+[triggers.capture]
+type = "mouse_click"
+x = 579
+y = 770
+
+[triggers.next_page]
+type = "keycode"
+keycode = 124

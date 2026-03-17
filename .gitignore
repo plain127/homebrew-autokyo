@@ -1,0 +1,7 @@
+__pycache__/
+captures/
+exports/
+artifacts/
+runtime/
+.venv/
+.DS_Store
