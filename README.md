@@ -46,7 +46,8 @@ autokyo setup
 
 - 캡처 버튼 위에 마우스를 올리고 `Enter`
 - 확인 버튼 위에 마우스를 올리고 `Enter`
-- 페이지 변화 영역 `x y width height` 입력
+- 페이지 변화 영역의 왼쪽 위에 마우스를 올리고 `Enter`
+- 페이지 변화 영역의 오른쪽 아래에 마우스를 올리고 `Enter`
 - 마지막에 `config.toml` 저장
 
 ### 페이지 변화 감지 확인
@@ -65,6 +66,25 @@ autokyo run
 
 ```bash
 autokyo pdf --delete-source
+```
+
+`autokyo pdf`는 기본적으로 아래 순서로 진행합니다.
+
+- PDF 제목을 묻고
+- 결과 파일을 바탕화면 `~/Desktop/<제목>.pdf`에 저장하고
+- 현재 세션의 Photos 이미지를 `captures/`로 내보낸 뒤 PDF를 만들고
+- `--delete-source`를 붙였으면 `captures/` 이미지와 해당 Photos 이미지까지 정리합니다.
+
+Photos 수량이 세션 수량과 정확히 일치하지 않으면 기본적으로 가능한 범위만 PDF로 만들고, 정확히 일치하지 않을 때 실패시키고 싶다면 `--strict-count`를 사용하세요.
+
+```bash
+autokyo pdf --delete-source --strict-count
+```
+
+이미 `captures/` 폴더에 이미지가 준비되어 있을 때만 아래 명령으로 바로 PDF를 만들 수도 있습니다.
+
+```bash
+autokyo pdf --input ./captures --delete-source
 ```
 
 ### MCP 등록
@@ -106,10 +126,12 @@ autokyo mcp-install antigravity
 
 - `autokyo setup`: 캡처 버튼, 확인 버튼, 변화 영역을 순서대로 읽어 설정 저장
 - `autokyo run`: 자동화 실행
+- `autokyo pdf --delete-source`: PDF 제목을 묻고, 현재 세션을 바탕화면 PDF로 만들고, 원본 정리
+- `autokyo export-photos-to-captures --make-pdf --delete-source`: 현재 세션의 Photos 이미지를 `captures/`로 내보내고 PDF 생성
 - `autokyo probe`: 화면 변화 감지 영역 확인
 - `autokyo mousepos --watch`: 마우스 좌표 확인
 - `autokyo status`: 현재 세션 상태 출력
-- `autokyo pdf --delete-source`: `captures/`를 PDF로 만들고 원본 삭제
+- `autokyo pdf --input ./captures --delete-source`: 이미 준비된 `captures/`를 PDF로 만들고 원본 삭제
 - `autokyo mcp-http`: 로컬 streamable HTTP MCP 서버 수동 실행
 - `autokyo mcp`: 로컬 stdio MCP 서버 수동 실행
 

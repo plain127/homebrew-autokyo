@@ -44,6 +44,7 @@ class PhotosExportSummary:
     missing_count: int
     first_selected_filename: str | None
     last_selected_filename: str | None
+    selected_assets: tuple[PhotosAssetCandidate, ...] = ()
 
 
 def export_photos_for_session(
@@ -96,7 +97,8 @@ def export_photos_for_session(
         else:
             raise PhotosExportError(
                 f"Expected at least {expected_count} Photos images in the session window, "
-                f"but found {len(candidates)}"
+                f"but found {len(candidates)}. "
+                "Re-run with --allow-fewer if partial export is acceptable."
             )
     else:
         selected = candidates[-expected_count:]
@@ -105,7 +107,8 @@ def export_photos_for_session(
     if not allow_fewer and missing_count > 0:
         raise PhotosExportError(
             f"Expected at least {expected_count} Photos images in the session window, "
-            f"but found {len(candidates)}"
+            f"but found {len(candidates)}. "
+            "Re-run with --allow-fewer if partial export is acceptable."
         )
 
     cleared_count = 0
@@ -128,7 +131,22 @@ def export_photos_for_session(
         missing_count=missing_count,
         first_selected_filename=selected[0].filename if selected else None,
         last_selected_filename=selected[-1].filename if selected else None,
+        selected_assets=tuple(selected),
     )
+
+
+def delete_photos_assets(candidates: list[PhotosAssetCandidate] | tuple[PhotosAssetCandidate, ...]) -> int:
+    if not candidates:
+        return 0
+
+    _run_photos_script(
+        _build_delete_script(list(candidates)),
+        failure_prefix=(
+            "Photos delete failed. Make sure Photos is installed and that the "
+            "terminal has permission to automate Photos."
+        ),
+    )
+    return len(candidates)
 
 
 def _resolve_expected_count(state: SessionState, *, take_last: int | None) -> int:
@@ -171,7 +189,7 @@ def _query_candidates(
     query_lines = [
         "SELECT ZUUID, ZFILENAME, ZWIDTH, ZHEIGHT, ZADDEDDATE, ZDATECREATED",
         "FROM ZASSET",
-        "WHERE ZTRASHEDSTATE = 1",
+        "WHERE ZTRASHEDSTATE = 0",
         "  AND ZCLOUDDELETESTATE = 0",
         "  AND ZFILENAME IS NOT NULL",
         "  AND ZADDEDDATE IS NOT NULL",
@@ -248,10 +266,6 @@ def _prepare_output_directory(output_dir: Path, *, clear_output: bool) -> int:
 
 
 def _export_candidates(candidates: list[PhotosAssetCandidate], *, output_dir: Path) -> int:
-    osascript_path = shutil.which("osascript")
-    if not osascript_path:
-        raise PhotosExportError("osascript command not found")
-
     pad_width = max(4, len(str(len(candidates))))
     with tempfile.TemporaryDirectory(prefix="autokyo_photos_export_") as temp_dir:
         staging_root = Path(temp_dir)
@@ -262,21 +276,13 @@ def _export_candidates(candidates: list[PhotosAssetCandidate], *, output_dir: Pa
             export_specs.append((candidate, staging_dir))
 
         script = _build_export_script(export_specs)
-        try:
-            subprocess.run(
-                [osascript_path, "-l", "AppleScript"],
-                input=script,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            stderr = exc.stderr.strip() or exc.stdout.strip() or str(exc)
-            raise PhotosExportError(
+        _run_photos_script(
+            script,
+            failure_prefix=(
                 "Photos export failed. Make sure Photos is installed and that the "
-                "terminal has permission to automate Photos.\n"
-                f"{stderr}"
-            ) from exc
+                "terminal has permission to automate Photos."
+            ),
+        )
 
         exported_count = 0
         for index, (_, staging_dir) in enumerate(export_specs, start=1):
@@ -335,6 +341,62 @@ def _build_export_script(export_specs: list[tuple[PhotosAssetCandidate, Path]]) 
         ]
     )
     return "\n".join(lines)
+
+
+def _build_delete_script(candidates: list[PhotosAssetCandidate]) -> str:
+    spec_literals = [_candidate_spec_literal(candidate) for candidate in candidates]
+    lines = ["set deleteSpecs to {" + ", ".join(spec_literals) + "}"]
+    lines.extend(
+        [
+            "",
+            'tell application id "com.apple.Photos"',
+            "  repeat with deleteSpec in deleteSpecs",
+            "    set targetFilename to assetFilename of deleteSpec",
+            "    set targetWidth to assetWidth of deleteSpec",
+            "    set targetHeight to assetHeight of deleteSpec",
+            "    set matchedItems to every media item whose filename is targetFilename and width is targetWidth and height is targetHeight",
+            "    if (count of matchedItems) is 0 then",
+            '      error "No Photos media item matched filename: " & targetFilename',
+            "    end if",
+            "    if (count of matchedItems) is greater than 1 then",
+            '      error "Multiple Photos media items matched filename: " & targetFilename',
+            "    end if",
+            "    delete (item 1 of matchedItems)",
+            "  end repeat",
+            "end tell",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _candidate_spec_literal(candidate: PhotosAssetCandidate) -> str:
+    return (
+        "{assetFilename:"
+        + _applescript_string(candidate.filename)
+        + ", assetWidth:"
+        + str(candidate.width)
+        + ", assetHeight:"
+        + str(candidate.height)
+        + "}"
+    )
+
+
+def _run_photos_script(script: str, *, failure_prefix: str) -> None:
+    osascript_path = shutil.which("osascript")
+    if not osascript_path:
+        raise PhotosExportError("osascript command not found")
+
+    try:
+        subprocess.run(
+            [osascript_path, "-l", "AppleScript"],
+            input=script,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.strip() or exc.stdout.strip() or str(exc)
+        raise PhotosExportError(f"{failure_prefix}\n{stderr}") from exc
 
 
 def _parse_iso_datetime(raw_value: str) -> datetime:

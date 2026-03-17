@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -23,7 +24,12 @@ from autokyo.mcp_server import run_stdio_server
 from autokyo.orchestrator import CaptureOrchestrator, OrchestratorError
 from autokyo.page_state import PageStateError, PageStateDetector
 from autokyo.pdf_builder import PdfBuildError, build_pdf_from_directory
-from autokyo.photos_export import PhotosExportError, export_photos_for_session
+from autokyo.photos_export import (
+    PhotosExportError,
+    delete_photos_assets,
+    export_photos_for_session,
+)
+from autokyo.service import DEFAULT_CAPTURES_DIR, DEFAULT_PDF_OUTPUT, DEFAULT_PHOTOS_LIBRARY_DB
 from autokyo.session_store import SessionStore
 from autokyo.setup_flow import SetupDraft
 
@@ -73,28 +79,70 @@ def build_parser() -> argparse.ArgumentParser:
     pdf_parser = subparsers.add_parser(
         "make-pdf",
         aliases=["pdf"],
-        help="Combine images in a folder into one PDF",
+        help="Create a PDF, exporting the current session from Photos when needed",
     )
     pdf_parser.add_argument(
         "--input",
-        default="./captures",
-        help="Input image directory. Defaults to ./captures",
+        default=None,
+        help="Optional input image directory. If omitted, AutoKyo exports the current session from Photos into ./captures first",
     )
     pdf_parser.add_argument(
         "--output",
-        default="./exports/captures.pdf",
-        help="Output PDF path. Defaults to ./exports/captures.pdf",
+        default=None,
+        help="Output PDF path. Defaults to asking for a title and saving on the Desktop",
+    )
+    pdf_parser.add_argument(
+        "--title",
+        default=None,
+        help="PDF title to use for the Desktop filename when --output is omitted",
     )
     pdf_parser.add_argument(
         "--sort-by",
         choices=["auto", "created", "modified", "name"],
-        default="auto",
-        help="Image ordering strategy. Defaults to auto",
+        default="name",
+        help="Image ordering strategy. Defaults to name",
     )
     pdf_parser.add_argument(
         "--delete-source",
         action="store_true",
-        help="Delete source images after the PDF is created successfully",
+        help=(
+            "Delete source captures after the PDF is created successfully. "
+            "When AutoKyo exports from Photos, also delete the matching Photos items"
+        ),
+    )
+    pdf_parser.add_argument(
+        "--library-db",
+        default=str(DEFAULT_PHOTOS_LIBRARY_DB),
+        help="Photos.sqlite path when exporting from the current session",
+    )
+    pdf_parser.add_argument(
+        "--padding-seconds",
+        type=float,
+        default=5.0,
+        help="Time padding added before session start and after session end when exporting from Photos",
+    )
+    pdf_parser.add_argument(
+        "--take-last",
+        type=int,
+        default=None,
+        help="Export only the last N matching Photos items when exporting from the current session",
+    )
+    pdf_parser.add_argument(
+        "--width",
+        type=int,
+        default=None,
+        help="Optional exact width filter for Photos items when exporting from the current session",
+    )
+    pdf_parser.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help="Optional exact height filter for Photos items when exporting from the current session",
+    )
+    pdf_parser.add_argument(
+        "--strict-count",
+        action="store_true",
+        help="Fail if Photos contains fewer images than the session capture count when exporting from the current session",
     )
     export_parser = subparsers.add_parser(
         "export-photos-to-captures",
@@ -102,12 +150,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export_parser.add_argument(
         "--session-file",
-        default="./runtime/session.json",
-        help="Session JSON path. Defaults to ./runtime/session.json",
+        default=None,
+        help="Session JSON path. Defaults to the state_file from the active config.toml",
     )
     export_parser.add_argument(
         "--library-db",
-        default="~/Pictures/Photos Library.photoslibrary/database/Photos.sqlite",
+        default=str(DEFAULT_PHOTOS_LIBRARY_DB),
         help="Photos.sqlite path. Defaults to the standard Photos library database",
     )
     export_parser.add_argument(
@@ -161,8 +209,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export_parser.add_argument(
         "--pdf-output",
-        default="./exports/captures.pdf",
-        help="PDF output path when using --make-pdf. Defaults to ./exports/captures.pdf",
+        default=str(DEFAULT_PDF_OUTPUT),
+        help=f"PDF output path when using --make-pdf. Defaults to {DEFAULT_PDF_OUTPUT}",
     )
     export_parser.add_argument(
         "--pdf-sort-by",
@@ -173,7 +221,10 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument(
         "--delete-source",
         action="store_true",
-        help="Delete exported captures after a successful PDF build. Requires --make-pdf",
+        help=(
+            "Delete exported captures after a successful PDF build, then delete the matching "
+            "Photos items. Requires --make-pdf"
+        ),
     )
     mcp_install_parser = subparsers.add_parser(
         "mcp-install",
@@ -297,27 +348,7 @@ def main(argv: list[str] | None = None) -> int:
             return _run_mousepos(watch=bool(args.watch), interval=float(args.interval))
 
         if args.command in {"make-pdf", "pdf"}:
-            summary = build_pdf_from_directory(
-                Path(args.input),
-                Path(args.output),
-                sort_by=args.sort_by,
-                delete_source=bool(args.delete_source),
-            )
-            print(
-                json.dumps(
-                    {
-                        "status": "completed",
-                        "input_dir": str(summary.input_dir),
-                        "output_file": str(summary.output_file),
-                        "image_count": summary.image_count,
-                        "sort_by": summary.sort_by,
-                        "deleted_count": summary.deleted_count,
-                    },
-                    ensure_ascii=True,
-                    indent=2,
-                )
-            )
-            return 0
+            return _run_pdf_command(args)
 
         if args.command in {"mcp-install", "mcp-register"}:
             return _install_mcp_server(
@@ -338,8 +369,14 @@ def main(argv: list[str] | None = None) -> int:
             if args.delete_source and not args.make_pdf:
                 raise ValueError("--delete-source requires --make-pdf")
 
+            if args.session_file:
+                session_file = Path(args.session_file)
+            else:
+                export_config = load_config(resolve_config_path(args.config))
+                session_file = export_config.paths.state_file
+
             export_summary = export_photos_for_session(
-                Path(args.session_file),
+                session_file,
                 Path(args.output_dir),
                 library_db=Path(args.library_db),
                 time_padding_seconds=float(args.padding_seconds),
@@ -383,6 +420,15 @@ def main(argv: list[str] | None = None) -> int:
                     "sort_by": pdf_summary.sort_by,
                     "deleted_count": pdf_summary.deleted_count,
                 }
+                if args.delete_source:
+                    try:
+                        photos_deleted_count = delete_photos_assets(export_summary.selected_assets)
+                    except PhotosExportError as exc:
+                        raise PhotosExportError(
+                            "PDF was created and exported captures were deleted, but matching "
+                            f"Photos items could not be deleted.\n{exc}"
+                        ) from exc
+                    payload["photos_deleted_count"] = photos_deleted_count
 
             print(json.dumps(payload, ensure_ascii=True, indent=2))
             return 0
@@ -467,6 +513,7 @@ def main(argv: list[str] | None = None) -> int:
         PdfBuildError,
         PhotosExportError,
         OSError,
+        EOFError,
         ValueError,
     ) as exc:
         print(f"ERROR: {exc}")
@@ -531,28 +578,117 @@ def _run_setup(config_path: Path) -> int:
 
 def _prompt_change_region(draft: SetupDraft) -> tuple[int, int, int, int]:
     current = draft.change_region
-    default_text = f"{current.x} {current.y} {current.width} {current.height}"
-    prompt = f"페이지 변화 영역 x y width height 입력 [{default_text}]: "
+    print(
+        "페이지 변화 영역을 마우스로 선택합니다. "
+        f"현재값: {current.x} {current.y} {current.width} {current.height}"
+    )
+    input("변화 영역의 왼쪽 위에 마우스를 올리고 Enter를 누르세요...")
+    start_x, start_y = get_mouse_position()
+    print(json.dumps({"change_region_start": {"x": start_x, "y": start_y}}, ensure_ascii=True))
 
-    while True:
-        raw = input(prompt).strip()
-        if not raw:
-            return current.x, current.y, current.width, current.height
+    input("변화 영역의 오른쪽 아래에 마우스를 올리고 Enter를 누르세요...")
+    end_x, end_y = get_mouse_position()
+    print(json.dumps({"change_region_end": {"x": end_x, "y": end_y}}, ensure_ascii=True))
 
-        normalized = raw.replace(",", " ")
-        parts = [part for part in normalized.split() if part]
-        if len(parts) != 4:
-            print("x y width height 형식으로 정수 4개를 입력하세요.")
-            continue
+    x = min(start_x, end_x)
+    y = min(start_y, end_y)
+    width = abs(end_x - start_x) + 1
+    height = abs(end_y - start_y) + 1
+    return x, y, width, height
+
+
+def _run_pdf_command(args: argparse.Namespace) -> int:
+    output_file = _resolve_pdf_output_path(args.output, title=args.title)
+
+    if args.input:
+        pdf_summary = build_pdf_from_directory(
+            Path(args.input),
+            output_file,
+            sort_by=args.sort_by,
+            delete_source=bool(args.delete_source),
+        )
+        payload = {
+            "status": "completed",
+            "mode": "build_from_directory",
+            "input_dir": str(pdf_summary.input_dir),
+            "output_file": str(pdf_summary.output_file),
+            "image_count": pdf_summary.image_count,
+            "sort_by": pdf_summary.sort_by,
+            "deleted_count": pdf_summary.deleted_count,
+        }
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+        return 0
+
+    config = load_config(resolve_config_path(args.config))
+    export_summary = export_photos_for_session(
+        config.paths.state_file,
+        DEFAULT_CAPTURES_DIR,
+        library_db=Path(args.library_db),
+        time_padding_seconds=float(args.padding_seconds),
+        take_last=args.take_last,
+        match_width=args.width,
+        match_height=args.height,
+        clear_output=True,
+        allow_fewer=not bool(args.strict_count),
+        dry_run=False,
+    )
+    pdf_summary = build_pdf_from_directory(
+        DEFAULT_CAPTURES_DIR,
+        output_file,
+        sort_by=args.sort_by,
+        delete_source=bool(args.delete_source),
+    )
+
+    photos_deleted_count = 0
+    if args.delete_source:
         try:
-            x, y, width, height = (int(part) for part in parts)
-        except ValueError:
-            print("x y width height는 모두 정수여야 합니다.")
-            continue
-        if width <= 0 or height <= 0:
-            print("width와 height는 1 이상의 정수여야 합니다.")
-            continue
-        return x, y, width, height
+            photos_deleted_count = delete_photos_assets(export_summary.selected_assets)
+        except PhotosExportError as exc:
+            raise PhotosExportError(
+                "PDF was created and exported captures were deleted, but matching Photos items "
+                f"could not be deleted.\n{exc}"
+            ) from exc
+
+    payload: dict[str, object] = {
+        "status": "completed",
+        "mode": "export_session_and_build",
+        "session_file": str(export_summary.session_file),
+        "input_dir": str(pdf_summary.input_dir),
+        "output_file": str(pdf_summary.output_file),
+        "image_count": pdf_summary.image_count,
+        "sort_by": pdf_summary.sort_by,
+        "deleted_count": pdf_summary.deleted_count,
+        "expected_count": export_summary.expected_count,
+        "candidate_count": export_summary.candidate_count,
+        "selected_count": export_summary.selected_count,
+        "missing_count": export_summary.missing_count,
+    }
+    if args.delete_source:
+        payload["photos_deleted_count"] = photos_deleted_count
+
+    print(json.dumps(payload, ensure_ascii=True, indent=2))
+    return 0
+
+
+def _resolve_pdf_output_path(output: str | None, *, title: str | None) -> Path:
+    if output:
+        return Path(output)
+
+    resolved_title = title.strip() if title else ""
+    if not resolved_title:
+        raw_title = input("PDF 제목을 입력하세요 [captures]: ").strip()
+        resolved_title = raw_title or "captures"
+
+    safe_title = _sanitize_pdf_title(resolved_title)
+    return (Path.home() / "Desktop" / f"{safe_title}.pdf").resolve()
+
+
+def _sanitize_pdf_title(value: str) -> str:
+    stripped = value.strip()
+    if stripped.lower().endswith(".pdf"):
+        stripped = stripped[:-4]
+    sanitized = re.sub(r'[/:]+', "_", stripped).strip().rstrip(".")
+    return sanitized or "captures"
 
 
 def _install_mcp_server(

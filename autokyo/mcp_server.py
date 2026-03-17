@@ -599,7 +599,7 @@ class AutokyoMCPServer:
                         },
                         "output_file": {
                             "type": "string",
-                            "description": "Output PDF path. Defaults to ./exports/captures.pdf",
+                            "description": f"Output PDF path. Defaults to {DEFAULT_PDF_OUTPUT}",
                         },
                         "sort_by": {
                             "type": "string",
@@ -608,7 +608,7 @@ class AutokyoMCPServer:
                         },
                         "delete_source": {
                             "type": "boolean",
-                            "description": "Delete exported captures after the PDF is created successfully.",
+                            "description": "Delete exported captures after the PDF is created successfully, then delete the matching Photos items.",
                         },
                         "probe_first": {
                             "type": "boolean",
@@ -709,7 +709,7 @@ class AutokyoMCPServer:
                         },
                         "output_file": {
                             "type": "string",
-                            "description": "Output PDF path. Defaults to ./exports/captures.pdf",
+                            "description": f"Output PDF path. Defaults to {DEFAULT_PDF_OUTPUT}",
                         },
                         "sort_by": {
                             "type": "string",

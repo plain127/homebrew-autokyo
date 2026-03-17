@@ -8,13 +8,13 @@ from autokyo.config import load_config
 from autokyo.orchestrator import CaptureOrchestrator
 from autokyo.page_state import PageStateDetector
 from autokyo.pdf_builder import build_pdf_from_directory
-from autokyo.photos_export import export_photos_for_session
+from autokyo.photos_export import PhotosExportError, delete_photos_assets, export_photos_for_session
 from autokyo.session_store import SessionStore
 
 
 DEFAULT_CONFIG_PATH = Path("config.toml")
 DEFAULT_CAPTURES_DIR = Path("./captures")
-DEFAULT_PDF_OUTPUT = Path("./exports/captures.pdf")
+DEFAULT_PDF_OUTPUT = Path.home() / "Desktop" / "captures.pdf"
 DEFAULT_PHOTOS_LIBRARY_DB = (
     Path.home() / "Pictures" / "Photos Library.photoslibrary" / "database" / "Photos.sqlite"
 )
@@ -150,6 +150,14 @@ def capture_to_pdf(
         sort_by=sort_by,
         delete_source=delete_source,
     )
+    if delete_source:
+        try:
+            payload["photos_deleted_count"] = delete_photos_assets(export_summary.selected_assets)
+        except PhotosExportError as exc:
+            raise PhotosExportError(
+                "PDF was created and exported captures were deleted, but matching Photos items "
+                f"could not be deleted.\n{exc}"
+            ) from exc
     return payload
 
 
