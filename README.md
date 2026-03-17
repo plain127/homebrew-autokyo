@@ -17,7 +17,7 @@
 - Python 3.11 이상
 - Python 인터프리터에 `손쉬운 사용` 권한
 - Python 인터프리터에 `화면 및 시스템 오디오 녹화` 권한
-- 실제 좌표와 딜레이가 들어간 `config.toml`
+- `autokyo setup` 또는 MCP 설정 툴로 만든 `config.toml`
 
 `config.toml`은 아래 순서로 자동 탐색합니다.
 
@@ -32,6 +32,41 @@ brew install plain127/autokyo/autokyo
 ```
 
 ## 빠른사용법
+### 우선 교보도서관 앱을 키고 다운받은 도서를 화면에 띄우세요.
+
+### CLI로 초기 설정
+
+좌표를 직접 찾는 방식이 아니라, 마우스를 원하는 버튼 위에 올린 뒤 그 순간의 좌표를 읽어 저장합니다.
+
+```bash
+autokyo setup
+```
+
+터미널이 순서대로 아래를 묻습니다.
+
+- 캡처 버튼 위에 마우스를 올리고 `Enter`
+- 확인 버튼 위에 마우스를 올리고 `Enter`
+- 페이지 변화 영역 `x y width height` 입력
+- 마지막에 `config.toml` 저장
+
+### 페이지 변화 감지 확인
+
+```bash
+autokyo probe
+```
+
+### 실행
+
+```bash
+autokyo run
+```
+
+### PDF 만들기
+
+```bash
+autokyo pdf --delete-source
+```
+
 ### MCP 등록
 
 터미널에서 바로 등록할 수 있습니다.
@@ -42,6 +77,16 @@ autokyo mcp-install claude
 autokyo mcp-install openclaw
 autokyo mcp-install antigravity
 ```
+
+프롬프트 예시:
+
+- `AutoKyo로 설정해줘`
+- `교보전자도서관 책 PDF 만들어줘`
+- `AutoKyo로 현재 마우스 좌표 알려줘`
+- `AutoKyo 상태 보여줘`
+- `AutoKyo로 변화 영역 확인해줘`
+- `AutoKyo 실행해줘`
+- `AutoKyo captures를 PDF로 만들어줘`
 
 Antigravity가 설정 파일을 못 찾으면 직접 지정하면 됩니다.
 
@@ -60,59 +105,43 @@ python3 -m autokyo mcp-install antigravity --client-config /path/to/mcp_config.j
 
 현재 MCP에서 노출하는 툴:
 
+- `setup_autokyo`
+- `setup_capture_button`
+- `setup_confirm_button`
+- `setup_change_region`
+- `save_config`
+- `capture_to_pdf`
+- `get_mouse_position`
 - `run_capture_session`
 - `get_session_status`
 - `probe_region`
-- `get_mouse_position`
 - `build_pdf`
 
-MCP 등록 후 LLM에게 이렇게 말하면 됩니다.
-
-- `AutoKyo MCP로 현재 마우스 좌표 확인해`
-- `AutoKyo MCP로 probe_region 실행해서 change_region이 맞는지 봐줘`
-- `AutoKyo MCP로 현재 세션 상태 확인해`
-- `AutoKyo MCP로 현재 설정대로 자동화 실행해`
-- `AutoKyo MCP로 captures 폴더를 PDF로 만들어`
 
 ## 세부 사용법
-1. 캡처 버튼 좌표 확인
+1. 설치형으로 쓰는 경우 `python3 -m autokyo` 대신 `autokyo`만 쓰면 됩니다.
+
+2. 저장소에서 직접 실행 중이면 아래처럼 쓸 수 있습니다.
 
 ```bash
-python3 -m autokyo mousepos --watch
-```
-
-2. `config.toml` 수정
-
-- `triggers.capture`
-- `capture.post_steps`
-- `triggers.next_page`
-- `page.change_region`
-- `capture.post_action_delay_ms`
-- `page.stall_timeout_seconds`
-- `loop.max_pages`
-
-3. 페이지 변화 감지 확인
-
-```bash
+python3 -m autokyo setup
 python3 -m autokyo probe
-```
-
-4. 실행
-
-```bash
 python3 -m autokyo run
-```
-
-5. PDF 만들기
-
-```bash
 python3 -m autokyo pdf --delete-source
 ```
 
-설치형으로 쓰는 경우 `python3 -m autokyo` 대신 `autokyo`만 쓰면 됩니다.
+3. MCP 등록도 같은 방식으로 할 수 있습니다.
+
+```bash
+python3 -m autokyo mcp-install codex
+python3 -m autokyo mcp-install claude
+python3 -m autokyo mcp-install openclaw
+python3 -m autokyo mcp-install antigravity --client-config /path/to/mcp_config.json
+```
 
 ## 자주 쓰는 명령
 
+- `autokyo setup`: 캡처 버튼, 확인 버튼, 변화 영역을 순서대로 읽어 설정 저장
 - `autokyo run`: 자동화 실행
 - `autokyo probe`: 화면 변화 감지 영역 확인
 - `autokyo mousepos --watch`: 마우스 좌표 확인

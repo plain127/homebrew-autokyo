@@ -27,6 +27,19 @@ def build_formula(*, version: str, sha256: str, python_formula: str, homepage: s
     virtualenv_install_with_resources
   end
 
+  def post_install
+    system bin/"autokyo", "init-config"
+  end
+
+  def caveats
+    <<~EOS
+      Default config created at:
+        #{{Dir.home}}/Library/Application Support/AutoKyo/config.toml
+
+      Edit this file before running `autokyo run` or `autokyo mcp-install ...`.
+    EOS
+  end
+
   test do
     assert_match "autokyo", shell_output("#{{bin}}/autokyo --help")
   end

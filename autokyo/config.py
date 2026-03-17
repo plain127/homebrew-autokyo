@@ -9,11 +9,51 @@ class ConfigError(ValueError):
     pass
 
 
+DEFAULT_CONFIG_TEXT = """# AutoKyo default config
+# Update the coordinates and timing values for your own environment before use.
+
+[paths]
+state_file = "./runtime/session.json"
+artifact_dir = "./artifacts"
+
+[page]
+start_index = 1
+change_timeout_seconds = 2.5
+stall_timeout_seconds = 4.0
+post_turn_delay_ms = 250
+poll_interval_seconds = 0.25
+stability_polls = 2
+change_region = { x = 0, y = 0, width = 200, height = 50 }
+
+[capture]
+post_action_delay_ms = 300
+
+[loop]
+startup_delay_seconds = 3.0
+cooldown_seconds = 0.2
+max_pages = 0
+resume = true
+
+[triggers.capture]
+type = "mouse_click"
+x = 0
+y = 0
+
+[triggers.next_page]
+type = "keycode"
+keycode = 124
+"""
+
+
+def default_user_config_path() -> Path:
+    return (Path.home() / "Library" / "Application Support" / "AutoKyo" / "config.toml").resolve()
+
+
 def default_config_candidates() -> tuple[Path, ...]:
     project_root = Path(__file__).resolve().parents[1]
     candidates = [
         Path.cwd() / "config.toml",
-        Path.home() / "Library" / "Application Support" / "AutoKyo" / "config.toml",
+        default_user_config_path(),
         Path.home() / ".config" / "autokyo" / "config.toml",
         project_root / "config.toml",
     ]
@@ -47,7 +87,20 @@ def resolve_config_path(path: str | Path | None, *, must_exist: bool = True) -> 
             f"Searched: {searched}. Pass --config explicitly."
         )
 
-    return default_config_candidates()[1]
+    return default_user_config_path()
+
+
+def write_default_config(path: str | Path | None = None, *, overwrite: bool = False) -> Path:
+    resolved = (
+        default_user_config_path()
+        if path is None or not str(path).strip()
+        else Path(path).expanduser().resolve()
+    )
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    if resolved.exists() and not overwrite:
+        return resolved
+    resolved.write_text(DEFAULT_CONFIG_TEXT, encoding="utf-8")
+    return resolved
 
 
 def _to_path(base_dir: Path, raw_value: str) -> Path:

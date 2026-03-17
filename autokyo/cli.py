@@ -9,13 +9,14 @@ import sys
 import time
 
 from autokyo.actions import AutomationError, get_mouse_position
-from autokyo.config import ConfigError, load_config, resolve_config_path
+from autokyo.config import ConfigError, load_config, resolve_config_path, write_default_config
 from autokyo.mcp_server import run_stdio_server
 from autokyo.orchestrator import CaptureOrchestrator, OrchestratorError
 from autokyo.page_state import PageStateError, PageStateDetector
 from autokyo.pdf_builder import PdfBuildError, build_pdf_from_directory
 from autokyo.photos_export import PhotosExportError, export_photos_for_session
 from autokyo.session_store import SessionStore
+from autokyo.setup_flow import SetupDraft
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +35,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("mcp", help="Run the Autokyo MCP server over stdio")
+    subparsers.add_parser(
+        "init-config",
+        help="Create the default config.toml in the standard AutoKyo config location",
+    )
+    subparsers.add_parser(
+        "setup",
+        help="Interactively capture button coordinates and the page-change region, then save config.toml",
+    )
     subparsers.add_parser("run", help="Run the capture loop")
     subparsers.add_parser("probe", help="Capture and save one page-check region sample")
     subparsers.add_parser("status", help="Print session state JSON if present")
@@ -206,7 +215,29 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "mcp":
-            return run_stdio_server(default_config_path=resolve_config_path(args.config))
+            return run_stdio_server(
+                default_config_path=resolve_config_path(args.config, must_exist=False)
+            )
+
+        if args.command == "init-config":
+            config_path = resolve_config_path(args.config, must_exist=False)
+            existed_before = config_path.exists()
+            write_default_config(config_path)
+            print(
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "config_path": str(config_path),
+                        "created": not existed_before,
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                )
+            )
+            return 0
+
+        if args.command == "setup":
+            return _run_setup(resolve_config_path(args.config, must_exist=False))
 
         if args.command in {"mousepos", "coords"}:
             return _run_mousepos(watch=bool(args.watch), interval=float(args.interval))
@@ -400,6 +431,72 @@ def _run_mousepos(*, watch: bool, interval: float) -> int:
         return 0
 
 
+def _run_setup(config_path: Path) -> int:
+    draft = SetupDraft.load(config_path)
+    print(f"설정 파일: {draft.config_path}")
+
+    try:
+        input("캡처 버튼 위에 마우스를 올리고 Enter를 누르세요...")
+        capture_x, capture_y = get_mouse_position()
+        draft.set_capture_button(capture_x, capture_y)
+        print(json.dumps({"capture_button": {"x": capture_x, "y": capture_y}}, ensure_ascii=True))
+
+        input("확인 버튼 위에 마우스를 올리고 Enter를 누르세요...")
+        confirm_x, confirm_y = get_mouse_position()
+        confirm_delay_ms = draft.set_confirm_button(confirm_x, confirm_y)
+        print(
+            json.dumps(
+                {
+                    "confirm_button": {
+                        "x": confirm_x,
+                        "y": confirm_y,
+                        "delay_ms": confirm_delay_ms,
+                    }
+                },
+                ensure_ascii=True,
+            )
+        )
+
+        region = _prompt_change_region(draft)
+    except KeyboardInterrupt:
+        print()
+        return 130
+
+    draft.set_change_region(*region)
+    draft.save()
+
+    payload = draft.summary()
+    payload["status"] = "completed"
+    print(json.dumps(payload, ensure_ascii=True, indent=2))
+    return 0
+
+
+def _prompt_change_region(draft: SetupDraft) -> tuple[int, int, int, int]:
+    current = draft.change_region
+    default_text = f"{current.x} {current.y} {current.width} {current.height}"
+    prompt = f"페이지 변화 영역 x y width height 입력 [{default_text}]: "
+
+    while True:
+        raw = input(prompt).strip()
+        if not raw:
+            return current.x, current.y, current.width, current.height
+
+        normalized = raw.replace(",", " ")
+        parts = [part for part in normalized.split() if part]
+        if len(parts) != 4:
+            print("x y width height 형식으로 정수 4개를 입력하세요.")
+            continue
+        try:
+            x, y, width, height = (int(part) for part in parts)
+        except ValueError:
+            print("x y width height는 모두 정수여야 합니다.")
+            continue
+        if width <= 0 or height <= 0:
+            print("width와 height는 1 이상의 정수여야 합니다.")
+            continue
+        return x, y, width, height
+
+
 def _install_mcp_server(
     *,
     client: str,
@@ -411,7 +508,11 @@ def _install_mcp_server(
     dry_run: bool,
 ) -> int:
     normalized_client = "claude" if client == "claude-code" else client
-    resolved_config = resolve_config_path(config_path_arg)
+    resolved_config = resolve_config_path(config_path_arg, must_exist=False)
+    config_created = False
+    if not resolved_config.exists() and not dry_run:
+        write_default_config(resolved_config)
+        config_created = True
     invocation = _build_local_mcp_invocation(
         config_path=resolved_config,
         python_executable=python_executable,
@@ -449,6 +550,7 @@ def _install_mcp_server(
             "name": server_name,
             "scope": scope,
             "config_path": str(resolved_config),
+            "config_created": config_created,
             "server_command": invocation,
             "remove_command": remove_command,
             "install_command": install_command,
@@ -501,6 +603,7 @@ def _install_antigravity_server(
         "client": "antigravity",
         "name": server_name,
         "config_path": str(config_path),
+        "config_created": False,
         "client_config_path": str(antigravity_config),
         "server_command": invocation,
         "entry": server_entry,
@@ -542,6 +645,7 @@ def _install_openclaw_server(
             "client": "openclaw",
             "name": server_name,
             "config_path": str(config_path),
+            "config_created": False,
             "client_config_path": str(Path.home() / ".openclaw" / "openclaw.json"),
             "server_command": invocation,
             "entry": server_entry,
@@ -566,6 +670,7 @@ def _install_openclaw_server(
         "client": "openclaw",
         "name": server_name,
         "config_path": str(config_path),
+        "config_created": False,
         "client_config_path": str(openclaw_config_path),
         "server_command": invocation,
         "entry": server_entry,
