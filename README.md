@@ -23,8 +23,6 @@
 
 ## 설치
 
-통합 저장소 이름을 `homebrew-autokyo`로 바꾼 뒤:
-
 ```bash
 brew install plain127/autokyo/autokyo
 ```
