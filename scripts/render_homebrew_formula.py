@@ -55,13 +55,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--homepage",
-        default="https://github.com/plain127/AutoKyo-ebook-script",
+        default="https://github.com/plain127/homebrew-autokyo",
         help="GitHub repository homepage",
     )
     parser.add_argument(
         "--output",
-        default="-",
-        help='Output path. Defaults to "-" for stdout',
+        default="Formula/autokyo.rb",
+        help='Output path. Defaults to "Formula/autokyo.rb"',
     )
     args = parser.parse_args()
 
