@@ -3,8 +3,8 @@ class Autokyo < Formula
 
   desc "macOS local automation tool for page-by-page ebook viewer workflows"
   homepage "https://github.com/plain127/homebrew-autokyo"
-  url "https://github.com/plain127/homebrew-autokyo/archive/refs/tags/v0.1.2.tar.gz"
-  sha256 "31dae44c37d0fbf1706501bba0f5cce7877f64e2c09d1b48e35ae182da42c70c"
+  url "https://github.com/plain127/homebrew-autokyo/archive/refs/tags/v0.1.3.tar.gz"
+  sha256 "9d6f3af39b9ef37e8e935537dac268c256f8994d9cf8d472da914684f294cdf4"
 
   depends_on "python@3.12"
 
